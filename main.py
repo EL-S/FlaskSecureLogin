@@ -1,4 +1,4 @@
-from flask import Flask, abort, request
+from flask import Flask, abort, request, session, redirect, url_for, escape, request
 import os
 from random import randint
 import sqlite3
@@ -7,6 +7,10 @@ from os import urandom
 import hashlib
 
 filename = "userdata.db"
+
+app = Flask(__name__)
+
+app.secret_key = "secretkey"
 
 def init():
     global filename
@@ -46,13 +50,14 @@ def init_db():
     except:
         init_db()
 
-app = Flask(__name__)
-
 @app.route("/")
-def main():
-    body = '<a href="/login">Login?</a><br><a href="/register">Register?</a>'
-    #var = "".join([random_imgur() for i in range(1)])
-    return body
+def index():
+    if logged_in():
+        return 'Ya logged in<br><a href="/logout">Log out?</a>'
+    else:
+        body = '<a href="/login">Login?</a><br><a href="/register">Register?</a>'
+        #var = "".join([random_imgur() for i in range(1)])
+        return body
 
 @app.route("/login")
 def login():
@@ -65,6 +70,12 @@ def register():
     body = '<form action="/register_post" method="post">Username: <input type="text" name="username"><br>Password: <input type="password" name="password"><br>Confirm Password: <input type="password" name="password_confirm"><br><input type="submit" value="Submit"></form><br><a href="/">Home?</a><br><a href="/login">Login?</a>'
     #var = "".join([random_imgur() for i in range(1)])
     return body
+
+@app.route('/logout')
+def logout():
+    # remove the username from the session if it's there
+    session.pop('username', None)
+    return redirect(url_for('index'))    
 
 @app.route('/login_post', methods=['POST']) 
 def login_post():
@@ -90,7 +101,8 @@ def login_post():
 
                 if hashed_password == hashed_password_attempt:
                     #create cookie and redirect to secure pages
-                    return "Logged in<br><a href='/login'>Logout?</a>"
+                    session['username'] = username
+                    return redirect(url_for('index'))
                 else:
                     return "Incorrect Password<br><a href='/login'>Login?</a><br><a href='/'>Home?</a>"
             except:
@@ -142,7 +154,11 @@ def register_post():
 
     return "Error<br><a href='/register'>Register?</a><br><a href='/'>Home?</a>"
 
-    
+def logged_in():
+    if 'username' in session:
+        return True
+    else:
+        return False
 
 def hash_password(password,salt):
     salted_str = (password+salt).encode("utf-8")
