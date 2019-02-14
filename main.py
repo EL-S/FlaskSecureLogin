@@ -5,12 +5,17 @@ import sqlite3
 from base64 import b64encode
 from os import urandom
 import hashlib
+from send_email import *
 
 filename = "userdata.db"
 
 app = Flask(__name__)
 
-app.secret_key = "secretkey"
+app.secret_key = b'' #a secret key to encrypt user sessions
+
+admin_email = "email@gmail.com" #a gmail email address
+
+admin_password = "password" #a gmail email address password
 
 def init():
     global filename
@@ -42,6 +47,8 @@ def init_db():
                      username varchar(32) NOT NULL,
                      password varchar(128) NOT NULL,
                      salt varchar(128) NOT NULL,
+                     confirmation varchar(128) NOT NULL,
+                     email varchar(128) NOT NULL,
                      timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)''')
 
         # Save (commit) the changes
@@ -53,10 +60,14 @@ def init_db():
 @app.route("/")
 def index():
     if logged_in():
-        return 'Ya logged in<br><a href="/logout">Log out?</a>'
+        try:
+            username = session.get("username")
+            return 'Ya boi '+username+' logged in<br><a href="/settings">Settings?</a><br><a href="/logout">Log out?</a>'
+        except:
+            body = '<a href="/login">Login?</a><br><a href="/register">Register?</a>'
+            return body
     else:
         body = '<a href="/login">Login?</a><br><a href="/register">Register?</a>'
-        #var = "".join([random_imgur() for i in range(1)])
         return body
 
 @app.route("/login")
@@ -67,7 +78,7 @@ def login():
 
 @app.route("/register")
 def register():
-    body = '<form action="/register_post" method="post">Username: <input type="text" name="username"><br>Password: <input type="password" name="password"><br>Confirm Password: <input type="password" name="password_confirm"><br><input type="submit" value="Submit"></form><br><a href="/">Home?</a><br><a href="/login">Login?</a>'
+    body = '<form action="/register_post" method="post">Username: <input type="text" name="username"><br>Password: <input type="password" name="password"><br>Confirm Password: <input type="password" name="password_confirm"><br>Email: <input type="text" name="email"><br><input type="submit" value="Submit"></form><br><a href="/">Home?</a><br><a href="/login">Login?</a>'
     #var = "".join([random_imgur() for i in range(1)])
     return body
 
@@ -120,6 +131,8 @@ def register_post():
     username = request.form.get('username')
     password = request.form.get('password')
     password_confirm = request.form.get('password_confirm')
+    email = request.form.get('email')
+    validation_code = b64encode(os.urandom(12)).decode("utf-8").replace("=","a").replace("+","b").replace("/","c")
 
     connection = sqlite3.connect('userdata.db')
 
@@ -137,13 +150,21 @@ def register_post():
         
         # Insert a row of data
         try:
-            c.execute("INSERT INTO users(username, password, salt) VALUES (?,?,?)",[username,hashed_password,salt])
+            c.execute("INSERT INTO users(username, password, salt, confirmation, email) VALUES (?,?,?,?,?)",[username,hashed_password,salt,validation_code,email])
         
             # Save (commit) the changes
             connection.commit()
 
             connection.close()
-            return "Registered Successfully<br><a href='/login'>Login?</a><br><a href='/'>Home?</a>"
+
+            confirmation_link = "<a href='http://127.0.0.1:5000/confirm_email?cc="+validation_code+"&user="+username+"'>Click here to complete your registration.</a>"
+            
+            email_status = send_email(admin_email,admin_password,email,"Confirmation Email",confirmation_link)
+            
+            if email_status:
+                return "Registered Successfully!<br><br>Please use the confirmation link in your email for full access (The email may be in your spam folder).<br><a href='/login'>Login?</a><br><a href='/'>Home?</a>"
+            else:
+                return "Registered mostly successfully!<br><br>The confirmation link failed to send to your email, for full access, change your email or retry the sending process when you log in.<br><a href='/login'>Login?</a><br><a href='/'>Home?</a>"
         except:
             connection.close()
             return "Registration Failed<br><a href='/register'>Register?</a><br><a href='/'>Home?</a>"
@@ -154,11 +175,165 @@ def register_post():
 
     return "Error<br><a href='/register'>Register?</a><br><a href='/'>Home?</a>"
 
+@app.route('/settings') 
+def settings():
+    #if the email isn't confirmed, resend the email
+    #ability to change the password and the email
+    if logged_in():
+        resend_email = ''
+        try:
+            username = session.get("username")
+            
+            connection = sqlite3.connect('userdata.db')
+            
+            c = connection.cursor()
+                
+            c.execute("SELECT confirmation FROM users WHERE username=?", [username])
+
+            rows = c.fetchall()
+
+            if rows: #the username does exist
+
+                validation_code = rows[0][0]
+
+                if validation_code != "y": #potentially bad as it reveals the users email is confirmed
+                    resend_email = '<br><a href="/resend_email">Resend Confirmation Email?</a>'
+                else:
+                    pass
+            else:
+                return 'What in tarnation.'
+        except:
+            return 'Something went wrong.'
+        return 'Ya logged in and on the settings page<br><a href="/">Home?</a>'+resend_email+'<br><a href="/logout">Log out?</a>'
+    else:
+        return redirect(url_for('index'))
+
+#todo
+
+#change email
+
+#change password
+
+#change username(?)
+
+#I forgot my password
+
+#I forgot my username
+
+#I forgot my email
+
+@app.route('/resend_email')
+def resend_email():
+    if 'username' in session:
+        #now check the database if that is a real username
+        
+        try:
+            username = session.get("username")
+            
+            connection = sqlite3.connect('userdata.db')
+            
+            c = connection.cursor()
+                
+            c.execute("SELECT confirmation,email FROM users WHERE username=?", [username])
+
+            rows = c.fetchall()
+
+            if rows: #the username does exist
+
+                validation_code = rows[0][0]
+                email = rows[0][1]
+
+                if validation_code == "y": #potentially bad as it reveals the users email is confirmed
+                    return "That email has already been confirmed."
+                else:
+                    confirmation_link = "<a href='http://127.0.0.1:5000/confirm_email?cc="+validation_code+"&user="+username+"'>Click here to complete your registration.</a>"
+                            
+                    email_status = send_email(admin_email,admin_password,email,"Confirmation Email",confirmation_link)
+
+                    if email_status:
+                        return 'Email sent successfully.'
+                    else:
+                        return 'The email was not sent successfully.'
+            else:
+                return 'What in tarnation.'
+        except:
+            return 'Something went wrong.'
+    else:
+        return 'You must be logged in to do this.'
+
+@app.route("/confirm_email", methods={'GET'})
+def confirm_email(): #have the code expire
+    try:
+        confirmation_code = request.args.get("cc")
+        username = request.args.get("user")
+        try:
+            
+            connection = sqlite3.connect('userdata.db')
+            
+            c = connection.cursor()
+                
+            c.execute("SELECT confirmation FROM users WHERE username=?", [username])
+
+            rows = c.fetchall()
+
+            if rows: #the username does exist
+                print(rows)
+                confirmation_code_real = rows[0][0]
+                if confirmation_code_real == "y": #potentially bad as it reveals the users email is confirmed
+                    return "That email has already been confirmed"
+                elif confirmation_code_real == confirmation_code:
+                    #update the entry to be 'y'
+                    c.execute("UPDATE users SET confirmation=? WHERE username=?", ['y',username])
+
+                    connection.commit()
+                    
+                    connection.close()
+                    
+                    return "Your email has been validated."
+                else:
+                    return "Invalid Code."
+            else:
+                return "Invalid Username."
+        except:
+            return "Invalid Attempt."
+    except:
+        return "Invalid."
+    #do a lookup to check if that confirmation code matches that username
+
+    #if it do, redirect to homepage
+
+    #else, go to a page to send a new confirmation code (when logged in)
+
 def logged_in():
     if 'username' in session:
-        return True
+        #now check the database if that is a real username
+        
+        try:
+            username = session.get("username")
+            
+            connection = sqlite3.connect('userdata.db')
+            
+            c = connection.cursor()
+                
+            c.execute("SELECT username FROM users WHERE username=?", [username])
+
+            rows = c.fetchall()
+
+            if rows: #the username does exist
+                return True
+            else:
+                return False
+        except:
+            return False
     else:
         return False
+
+def confirmation_email(): #maybe work on this later
+    #get a validation code
+    validation_code = b64encode(os.urandom(32)).decode("utf-8")
+    print(validation_code)
+    #store it in the db with the user
+    #email the code with a link
 
 def hash_password(password,salt):
     salted_str = (password+salt).encode("utf-8")
@@ -166,31 +341,6 @@ def hash_password(password,salt):
     hashGen.update(salted_str)
     hashed_password = hashGen.hexdigest()
     return hashed_password
-
-##def oof(i):
-##    return "<br><b>"+str(i)+"</b>"
-##
-##def random_imgur():
-##    string = ""
-##    for i in range(1000000):
-##        string += str(randint(0,1))        
-##    return string
-##    letters = ["a","b","c","d","e","f","g","h","i","j","k","l","m","m","o","p","q","r","s","t","u","v","w","x","y","z"]
-##    numbers = ["0","1","2","3","4","5","6","7","8","9"]
-##
-##    imgur_str = ""
-##    for i in range(10000000):
-##        char_type = randint(0,1)
-##        if char_type == 1:
-##            case = randint(0,1)
-##            character = letters[randint(0,len(letters)-1)]
-##            if case == 0:
-##                character = character.upper()
-##        else:
-##            character = str(numbers[randint(0,len(numbers)-1)]) #maybe just do a randint next time
-##        imgur_str += character
-##    return "<br>"+imgur_str
-    #return '<br><blockquote class="imgur-embed-pub" lang="en" data-id="a/'+imgur_str+'"><a href="//imgur.com/'+imgur_str+'"></a></blockquote><script async src="//s.imgur.com/min/embed.js" charset="utf-8"></script>'
 
 init()
 
